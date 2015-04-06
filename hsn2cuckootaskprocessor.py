@@ -53,7 +53,8 @@ def mvContentToFile(content, filename = None):
 	os.chmod(file_path, 0704)
 	return file_path
 
-def urlToFile(url):
+def urlToFile(url): #To-Do: the old function returns filepath  but when I pass it to cuckoo it recieves it as file not url
+					#So it it better to simply return the URL too
 	fileDir = tempfile.mkdtemp()
 	file_path = os.path.join(fileDir, "%s.url" % hashlib.md5(url).hexdigest())
 	file_handle = open(file_path, "w")
@@ -72,6 +73,12 @@ def get_task_by_id(tId, dbObj = None):
 	@param tId: the task's id
 	@return: the task if one was found or None
 	"""
+
+	import lib.cuckoo.core.database
+
+	session = dbObj.Session()
+	row = session.query(lib.cuckoo.core.database.Task).get(tId)
+	return row
 	if not dbObj.cursor:
 		return None
 	try:
@@ -121,14 +128,17 @@ class CuckooTaskProcessor(HSN2TaskProcessor):
 			Returns a list of warnings (warnings). The current task is available at self.currentTask'''
 		logging.debug(self.__class__)
 		logging.debug(self.currentTask)
-		logging.debug(self.objects)
+		logging.debug("self.objects:" + str(self.objects))
 		if len(self.objects) == 0:
 			raise ObjectStoreException("Task processing didn't find task object.")
+
+		logging.info("Self.objects[0] %s" %(dir(self.objects[0])))
 		if self.objects[0].isSet("filename"):
 			filename = self.objects[0].filename
 		else:
 			filename = None
-		if self.objects[0].isSet("content"):
+		if self.objects[0].isSet("content") and False: #make this false now .. though the Content is Set but it can't get the content !!
+			logging.info("Inside Logging!!")
 			filePath = self.dsAdapter.saveTmp(self.currentTask.job, self.objects[0].content.getKey())
 			filePath = mvContentToFile(content, filename)
 		elif self.objects[0].isSet("url_original"):
@@ -163,8 +173,7 @@ class CuckooTaskProcessor(HSN2TaskProcessor):
 			"rating_threshold_suspicious" : 1.5,
 		}
 
-		logging.debug(params)
-
+		logging.info(params)
 		try:
 			for param in self.currentTask.parameters:
 				if param.name in params:
@@ -180,47 +189,77 @@ class CuckooTaskProcessor(HSN2TaskProcessor):
 					params[param.name] = value
 		except BaseException as e:
 			raise ParamException("%s" % str(e))
-		logging.debug("Parameters are: %s" % repr(params))
+
+		logging.info("Parameters are: %s" % repr(params))
 		analysisDir = ""
 		try:
 			self.objects[0].addTime("cuckoo_time_start", int(time.time() * 1000))
 			md5 = md5File(filePath)
-			cuckooTaskId = self.cuckooDB.add(filePath,
-					priority = params.get("priority"),
-					package = params.get("package"),
-					machine = params.get("vm_id"),
-					platform = None,
-					options = options,
-					custom = json.dumps(params),
-					timeout = params.get("timeout"),
-					md5 = md5
-				)
+			logging.info(self.cuckooDB)
+
+			#MD5 no more exist in cuckooDB class
+
+			if filePath.endswith('.url'):
+				temp_fh = open(filePath, 'r')
+				temp_url = temp_fh.read()
+				temp_fh.close()
+				cuckooTaskId = self.cuckooDB.add_url(
+						temp_url,
+						priority = params.get("priority"),
+						package = params.get("package"),
+						machine = params.get("vm_id"),
+						platform = None,
+						options = options,
+						custom = json.dumps(params),
+						timeout = params.get("timeout")
+						#md5 = md5
+						)
+			else:
+				cuckooTaskId = self.cuckooDB.add(
+						filePath,
+						priority = params.get("priority"),
+						package = params.get("package"),
+						machine = params.get("vm_id"),
+						platform = None,
+						options = options,
+						custom = json.dumps(params),
+						timeout = params.get("timeout"),
+						logging=logging
+						#md5 = md5
+						)
+
 			if cuckooTaskId is None:
 				raise ProcessingException("Cuckoo return None as task_id.")
 			######################################################################
 			#WAITING FOR CUCKOO TASK COMPLETION AND ANALYSIS HAPPENS HERE - START#
 			######################################################################
 
-			logging.debug("Cuckoo taskId is: %d" % cuckooTaskId)
+			logging.info("Cuckoo taskId is: %d" % cuckooTaskId)
+
 			task = get_task_by_id(cuckooTaskId, self.cuckooDB)
+			#STORM in the new cukoo the cursor of the databse isn't avaialble anymore 
+
+			#task = self.cuckooDB.view_task(cuckooTaskId)
 			timeSlept = 0
-			while task.get("completed_on") is None and timeSlept < self.cuckooFinalTimeout and self.keepRunning:
-				logging.debug("Wait loop. Time passed: %d" % timeSlept)
+			while task.completed_on is None and timeSlept < self.cuckooFinalTimeout and self.keepRunning:
+				logging.info("Wait loop. Time passed: %d" % timeSlept)
 				timeSlept = timeSlept + 2
 				time.sleep(2)
 				task = get_task_by_id(cuckooTaskId, self.cuckooDB)
+				#task = self.cuckooDB.view_task(cuckooTaskId)
 				logging.debug("Task is: %s" % repr(task))
-			if task.get("status") == 1:
+			if 'failed' in task.status:
 				raise ProcessingException("Cuckoo marked processing as failed.")
-			if task.get("status") == 0:
-				if self.keepRunning:
-					raise ProcessingException("Cuckoo processing passed it's timeout.")
-				else:
-					return []
-
+			# if task.status == 0:
+			# 	if self.keepRunning:
+			# 		raise ProcessingException("Cuckoo processing passed it's timeout.")
+			# 	else:
+			# 		return []
+			logging.debug("STORM: Task Completed Succsefully")
 			analysisDir = os.path.join("storage", "analyses", "%d" % cuckooTaskId)
 			if not os.path.isdir(analysisDir):
 				raise ProcessingException("Couldn't find the task analysis directory '%s'" % analysisDir)
+
 
 			if params.get("save_pcap"):
 				fileUp = os.path.join(self.cuckooDir, analysisDir, "dump.pcap")
@@ -242,20 +281,28 @@ class CuckooTaskProcessor(HSN2TaskProcessor):
 			fileUp = os.path.join(self.cuckooDir, analysisDir, "reports", "report.json")
 			timeSpent = self.waitForLog(fileUp, isDir = False, timeout = self.cuckooFinalTimeout - timeSlept)
 			if timeSpent is not None:
+				time.sleep(4) #sleep to make sure the file is completely written I am on VM :(
 				fh = open(fileUp)
 				report = json.load(fh)
 				fh.close()
-				logging.debug(report)
+				#logging.info("STORM: report: %s" %(str(report)))
+				
 				rating = self.sumRating(report, params)
 				if rating[0] is not None:
 					self.objects[0].addString("cuckoo_classification", rating[0])
+				else:#STORM to handel when rating is None cause it caused error with the templates!!
+					self.objects[0].addString("cuckoo_classification", "Unknown")
 				if rating[1] is not None:
 					self.objects[0].addString("cuckoo_classification_reason", rating[1])
+				else:
+					self.objects[0].addString("cuckoo_classification_reason", "Unknown")
+				 
 				if params.get("save_report_json"):
 					self.objects[0].addBytes("cuckoo_report_json", self.dsAdapter.putFile(fileUp, self.currentTask.job))
 				timeSlept = timeSlept + timeSpent
 			else:
 				raise ProcessingException("Didn't find '%s'" % fileUp)
+
 			if params.get("save_screenshots"):
 				fileUp = os.path.join(analysisDir, "shots")
 				timeSpent = self.waitForLog(fileUp, isDir = True, timeout = self.cuckooFinalTimeout - timeSlept)
@@ -270,9 +317,10 @@ class CuckooTaskProcessor(HSN2TaskProcessor):
 			####################################################################
 			self.objects[0].addTime("cuckoo_time_stop", int(time.time() * 1000))
 		finally:
-			rmTmpDirByFilepath(filePath)
+			#rmTmpDirByFilepath(filePath) #STORM DON'T DELETE the FILE NOW !!! will fix this later
 			if len(analysisDir) > 0 and os.path.isdir(analysisDir):
-				rmTmpDirByFilepath(os.path.join(analysisDir, "analysis.log"))
+				#rmTmpDirByFilepath(os.path.join(analysisDir, "analysis.log"))
+				pass
 		return []
 
 	def sumRating(self, results, params):
@@ -326,7 +374,7 @@ class CuckooTaskProcessor(HSN2TaskProcessor):
 		'''
 		i = 0
 		while i < timeout and self.keepRunning:
-			logging.debug("Wait for log '%s'. Time passed: %d/%d" % (filePath, i, timeout))
+			logging.info("STORM: Wait for log '%s'. Time passed: %d/%d" % (filePath, i, timeout))
 			if isDir:
 				if os.path.isdir(filePath):
 					return i

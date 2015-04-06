@@ -1,0 +1,146 @@
+diff hsn2-cuckoo/hsn2cuckootaskprocessor.py hsn2-cuckoo_1.2/hsn2cuckootaskprocessor.py
+56c56,57
+< def urlToFile(url):
+---
+> def urlToFile(url): #To-Do: the old function returns filepath  but when I pass it to cuckoo it recieves it as file not url
+> 					#So it it better to simply return the URL too
+74a76,81
+> 
+> 	import lib.cuckoo.core.database
+> 
+> 	session = dbObj.Session()
+> 	row = session.query(lib.cuckoo.core.database.Task).get(tId)
+> 	return row
+124c131
+< 		logging.debug(self.objects)
+---
+> 		logging.debug("self.objects:" + str(self.objects))
+126a134,135
+> 
+> 		logging.info("Self.objects[0] %s" %(dir(self.objects[0])))
+131c140,141
+< 		if self.objects[0].isSet("content"):
+---
+> 		if self.objects[0].isSet("content") and False: #make this false now .. though the Content is Set but it can't get the content !!
+> 			logging.info("Inside Logging!!")
+166,167c176
+< 		logging.debug(params)
+< 
+---
+> 		logging.info(params)
+183c192,193
+< 		logging.debug("Parameters are: %s" % repr(params))
+---
+> 
+> 		logging.info("Parameters are: %s" % repr(params))
+188,197c198,230
+< 			cuckooTaskId = self.cuckooDB.add(filePath,
+< 					priority = params.get("priority"),
+< 					package = params.get("package"),
+< 					machine = params.get("vm_id"),
+< 					platform = None,
+< 					options = options,
+< 					custom = json.dumps(params),
+< 					timeout = params.get("timeout"),
+< 					md5 = md5
+< 				)
+---
+> 			logging.info(self.cuckooDB)
+> 
+> 			#MD5 no more exist in cuckooDB class
+> 
+> 			if filePath.endswith('.url'):
+> 				temp_fh = open(filePath, 'r')
+> 				temp_url = temp_fh.read()
+> 				temp_fh.close()
+> 				cuckooTaskId = self.cuckooDB.add_url(
+> 						temp_url,
+> 						priority = params.get("priority"),
+> 						package = params.get("package"),
+> 						machine = params.get("vm_id"),
+> 						platform = None,
+> 						options = options,
+> 						custom = json.dumps(params),
+> 						timeout = params.get("timeout")
+> 						#md5 = md5
+> 						)
+> 			else:
+> 				cuckooTaskId = self.cuckooDB.add(
+> 						filePath,
+> 						priority = params.get("priority"),
+> 						package = params.get("package"),
+> 						machine = params.get("vm_id"),
+> 						platform = None,
+> 						options = options,
+> 						custom = json.dumps(params),
+> 						timeout = params.get("timeout"),
+> 						logging=logging
+> 						#md5 = md5
+> 						)
+> 
+204c237,238
+< 			logging.debug("Cuckoo taskId is: %d" % cuckooTaskId)
+---
+> 			logging.info("Cuckoo taskId is: %d" % cuckooTaskId)
+> 
+205a240,242
+> 			#STORM in the new cukoo the cursor of the databse isn't avaialble anymore 
+> 
+> 			#task = self.cuckooDB.view_task(cuckooTaskId)
+207,208c244,245
+< 			while task.get("completed_on") is None and timeSlept < self.cuckooFinalTimeout and self.keepRunning:
+< 				logging.debug("Wait loop. Time passed: %d" % timeSlept)
+---
+> 			while task.completed_on is None and timeSlept < self.cuckooFinalTimeout and self.keepRunning:
+> 				logging.info("Wait loop. Time passed: %d" % timeSlept)
+211a249
+> 				#task = self.cuckooDB.view_task(cuckooTaskId)
+213c251
+< 			if task.get("status") == 1:
+---
+> 			if 'failed' in task.status:
+215,220c253,258
+< 			if task.get("status") == 0:
+< 				if self.keepRunning:
+< 					raise ProcessingException("Cuckoo processing passed it's timeout.")
+< 				else:
+< 					return []
+< 
+---
+> 			# if task.status == 0:
+> 			# 	if self.keepRunning:
+> 			# 		raise ProcessingException("Cuckoo processing passed it's timeout.")
+> 			# 	else:
+> 			# 		return []
+> 			logging.debug("STORM: Task Completed Succsefully")
+224a263
+> 
+244a284
+> 				time.sleep(4) #sleep to make sure the file is completely written I am on VM :(
+248c288,289
+< 				logging.debug(report)
+---
+> 				#logging.info("STORM: report: %s" %(str(report)))
+> 				
+251a293,294
+> 				else:#STORM to handel when rating is None cause it caused error with the templates!!
+> 					self.objects[0].addString("cuckoo_classification", "Unknown")
+253a297,299
+> 				else:
+> 					self.objects[0].addString("cuckoo_classification_reason", "Unknown")
+> 				 
+258a305
+> 
+273c320
+< 			rmTmpDirByFilepath(filePath)
+---
+> 			#rmTmpDirByFilepath(filePath) #STORM DON'T DELETE the FILE NOW !!! will fix this later
+275c322,323
+< 				rmTmpDirByFilepath(os.path.join(analysisDir, "analysis.log"))
+---
+> 				#rmTmpDirByFilepath(os.path.join(analysisDir, "analysis.log"))
+> 				pass
+329c377
+< 			logging.debug("Wait for log '%s'. Time passed: %d/%d" % (filePath, i, timeout))
+---
+> 			logging.info("STORM: Wait for log '%s'. Time passed: %d/%d" % (filePath, i, timeout))
